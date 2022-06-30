@@ -86,8 +86,8 @@ Android 이전 버전에서만 권한이 요청되도록 선언할 수 있다.
 <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
 android:maxSdkVersion="18" />
 ```
-- 'getExternalFilesDir()'사용시 사용자가 앱을 제거할 때 삭제됩니다
-- 'getExternalStoragePublicDirectory()'사용시에는 사용자가 앱을 삭제해도 Dir들이 남아 있다.
+- `getExternalFilesDir()`사용시 사용자가 앱을 제거할 때 삭제됩니다
+- `getExternalStoragePublicDirectory()`사용시에는 사용자가 앱을 삭제해도 Dir들이 남아 있다.
 ### 1) 과정
 - 1.  촬영 이미지을 저장
 2. 촬영 이미지가 저장될 빈 File을 미리 만들어둔다.  
@@ -187,7 +187,7 @@ FileProvider 의 기본 기능을 확장하고 싶다면, FileProvider 를 상�
 - content URI 는 read, write access 를 `임시 permission` 으로 부여할 수 있다.
 
 
-## 2) 카메라 호출 과중
+## 2) 카메라 호출 과정
 1. 앱 내부 저장소에 빈 파일을 생성
 2. FileProvider를 이용해 빈 파일의 Uri를 얻음
 3. 얻은 photoURI를 Intent의 'MediaStore.EXTRA_OUTPUT' 속성 value값으로 put
@@ -294,3 +294,108 @@ private val cameraLauncher =
 - 생성된 uri Intent에 담고, Camera 실행  
 - Camera로 캡쳐한 사진 파일에 담고, uri값으로 사진 imageView에 넣기  
 
+# 3. 공용 공간에서 카메라 촬영  
+- 공용 공간을 위해서 `getExternalStoragePublicDirectory()`가 제공하는 외부저장소에 이미지 파일 저장  
+- path = `"/storage/emulated/0/Pictures/"` == `"sdcard/Pictures/"`  
+- Q = Android 10 = ApI 29
+- Q이상 : 파일의 URI는 MediaStore API를 이용해 획득  
+- Q미만일 경우: 파일의 URI는 FileProvider를 통해 획득  
+- Q미만의 경우: WRITE_EXTERNAL_STORAGE 권한 필요
+
+## 1) 세팅 - 이건 API28일 때만 해당하는 부분
+- 내가 구현한 예제는 FileProvider를 사용안하고, MediaStore API를 사용해서 파일 Uri를 얻었으므로 요 부분은 생략해도 된다~
+
+- 앱 전용 섹션에서 다뤘던 내용과 거의 동일
+- filepaths.xml
+```xml
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-path
+        name="cameraImgShared"
+        path="Pictures/"/>
+</paths>
+    <!-- 사진은 'Environment.getExternalStorageDirectory' 아래 'Pictures' 폴더 아래 저장-->
+```
+- manifest
+```xml
+<uses-permission android:name="android.permission.CAMERA" />
+<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+android:maxSdkVersion="28"/> <- 버전 9.0까지는 퍼미션 필요~ 
+
+<provider
+    android:authorities="org.techtown.seminar3.fileprovider"
+    android:name="androidx.core.content.FileProvider"
+    android:exported="false"
+    android:grantUriPermissions="true">
+    <meta-data android:name="android.support.FILE_PROVIDER_PATHS"
+        android:resource="@xml/file_paths"/>
+</provider>
+```
+
+## 1) 카메라호출
+- Q미만: 위의 앱 전용 공간 저장 예제와 동일(파일 위치만 다르다) - 요 부분은 거의 똑같기 때문에 패스~  
+- Q이상: ContentResolver를 이용해 URI 획득 () - 요 부분을 예제로 다룸~
+- 얻은 URI를 intent의 `Media.EXTRA_OUTPUT`속성 value값으로 put  
+- Intent로 카메라 호출  
+```kotlin
+/**
+ * Q이상 일 때, Camera 캡쳐 시 공용 저장소에 저장 후, Full 사진 보여주는 것 까지 하는 예제
+ * - ContentResolver를 사용해서 간단하게 Uri획득
+ */
+private lateinit var photo_over_Q_Uri: Uri
+
+private val cameraLauncher =
+    registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK && result.data != null) {
+            binding.ivAttached.setImageURI(photo_over_Q_Uri)
+        } else if (result.resultCode == RESULT_OK) {
+            Toast.makeText(this, "사진 선택을 취소하셨습니다.", Toast.LENGTH_SHORT).show()
+        } else {
+            Log.d(TAG, "MainActivity - cameraLauncher에서 알 수 없는 오류 발생")
+        }
+/**
+ * 카메라 호출할 Intent 호출
+ */
+fun getPictureIntent_Shared_over_Q(context: Context): Intent {
+    val timeStamp: String = SimpleDateFormat("yyyyMMdd_HHmmss").format(Date())
+    val contentValues = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, "$timeStamp.jpeg")
+        put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+        put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES)
+    }
+
+    // URI형식: ex) contents://media/external/images/media/1008
+    // context.contentResolver로 contentValues -> uri로 변환
+    photo_over_Q_Uri = context.contentResolver.insert(
+        MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues
+    ) ?: Uri.EMPTY
+
+    val fullPhotointent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+        putExtra(MediaStore.EXTRA_OUTPUT, photo_over_Q_Uri)
+    }
+    return fullPhotointent
+}
+
+private fun changeProfileImage() {
+        binding.btnGalleryImg.setOnClickListener {
+            galleyPermissionLauncher.launch(STORAGE_READ_PERMISSION)
+        }
+
+        binding.btnCameraImg.setOnClickListener {
+            openCamera()
+        }
+    }
+
+    private fun openCamera() {
+        photo_over_Q_Uri = Uri.EMPTY
+        val fullSizePictureIntent =
+            getPictureIntent_Shared_over_Q(applicationContext).apply {
+                resolveActivity(packageManager)
+            }
+        cameraLauncher.launch(fullSizePictureIntent)
+    }
+```
+- 파일 프로바이더가 필요없다.
+- 퍼미션 체크가 의무가 아니므로, 체크하는 부분이 없어졌다 :D
+# 뒤늦게 안 사실
+- Manifest에 카메라 권한을 딱히 추가 안해줘도 무방하다~~
+- 앱 내 저장소도 Media Api 를 사용해서 구현할 수 있을 것 같음~ 이거 좀 고민해보자
