@@ -1,5 +1,6 @@
 package org.techtown.seminar3
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.ImageDecoder
@@ -13,16 +14,13 @@ import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.FileProvider
 import org.techtown.seminar3.databinding.ActivityMainBinding
-import java.io.File
-import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
-    private lateinit var photoURI: Uri
+    private lateinit var photo_over_Q_Uri: Uri
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -31,29 +29,7 @@ class MainActivity : AppCompatActivity() {
         changeProfileImage()
         setContentView(binding.root)
     }
-    /**
-     * 카메라 권한 체크하는 launcher
-     */
-    private val cameraPermissionLauncher: ActivityResultLauncher<Array<String>> =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-            var flag = true
-            // 권한 체크
-            it.forEach {
-                if (!it.value) {
-                    flag = false
-                }
-            }
-            // 권한이 허용됐을 경우
-            if (flag) {
-                // 사진을 캡처하는 인텐트를 호출하는 코드
-                photoURI = Uri.EMPTY
-                val fullSizePictureIntent = getPictureIntent(applicationContext).apply {
-                    // applicationContext 대신 this도 OK
-                    resolveActivity(packageManager)
-                }
-                cameraLauncher.launch(fullSizePictureIntent)
-            }
-        }
+
     private val galleyPermissionLauncher: ActivityResultLauncher<String> =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
             Log.d(TAG, "MainActivity - galleyPermissionLauncher called")
@@ -67,7 +43,7 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             Log.d(TAG, "MainActivity - cameraLauncher called")
             if (result.resultCode == RESULT_OK && result.data != null) {
-                binding.ivAttached.setImageURI(photoURI)
+                binding.ivAttached.setImageURI(photo_over_Q_Uri)
             } else if (result.resultCode == RESULT_OK) {
                 Toast.makeText(this, "사진 선택을 취소하셨습니다.", Toast.LENGTH_SHORT).show()
             } else {
@@ -91,52 +67,27 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "사진 선택을 취소하셨습니다.", Toast.LENGTH_SHORT).show()
             }
         }
-    /**
-     * 2) 카메라 호출할 Intent 호출
-     */
-    fun getPictureIntent(context: Context): Intent {
-        val fullSizeCaptureIntent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-        // 1) File 생성 - 촬영 사진이 저장 될
-        // photoFile 경로 = /storage/emulated/0/Android/data/패키지명/files/Pictures/
-        val photoFile: File? = try {
-            createImageFile(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES))
-        } catch (ex: IOException) {
-            // Error occurred while creating the File
-            ex.printStackTrace()
-            null
-        }
-        // 2) 생성된 File로 부터 Uri 생성 (by FileProvider)
-        // URI 형식 EX) content://com.example.img.fileprovider/camera_images/20220630_0811_124213.jpg
-        photoFile?.let {
-            photoURI = FileProvider.getUriForFile(
-                context,
-                BuildConfig.APPLICATION_ID + ".fileprovider",
-                it
-            ) // BuildConfig.APPLICATION_ID: "org.techtown.seminar3"
-            // "org.techtown.seminar3.fileprovider"가 인증, 파일로부터 uri가져오기
-
-            // 3) 생성된 Uri를 Intent에 Put
-            fullSizeCaptureIntent.putExtra(MediaStore.EXTRA_OUTPUT, photoURI)
-        }
-        return fullSizeCaptureIntent
-    }
 
     /**
-     * 1) 이미지 넣을 앱 내 파일 만들기
+     * 카메라 호출할 Intent 호출
      */
-    @Throws(IOException::class)
-    private fun createImageFile(storageDir: File?): File {
-        Log.d(TAG, "MainActivity - createImageFile() called")
-        // Create an image file name
+    fun getPictureIntent_Shared_over_Q(context: Context): Intent {
         val timeStamp: String = SimpleDateFormat("yyyyMMdd_HHmmss").format(Date())
-        // Pictures 디렉토리에 2022_****.jpeg형태로 빈파일 저장
-        return File.createTempFile(
-            "$timeStamp _", /* prefix */
-            ".jpeg", /* suffix */
-            storageDir /* directory */
-        ).apply {
-            Log.d(TAG, "Created File AbsolutePath : $absolutePath")
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "$timeStamp.jpeg")
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES)
         }
+
+        // URI형식: ex) contents://media/external/images/media/1008
+        photo_over_Q_Uri = context.contentResolver.insert(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues
+        ) ?: Uri.EMPTY
+
+        val fullPhotointent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, photo_over_Q_Uri)
+        }
+        return fullPhotointent
     }
 
     private fun changeProfileImage() {
@@ -146,21 +97,27 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnCameraImg.setOnClickListener {
-            cameraPermissionLauncher.launch(PERMISSION_REQUESTED)
+            openCamera()
         }
+    }
+
+    private fun openCamera() {
+        photo_over_Q_Uri = Uri.EMPTY
+        val fullSizePictureIntent =
+            getPictureIntent_Shared_over_Q(applicationContext).apply {
+                resolveActivity(packageManager)
+            }
+        cameraLauncher.launch(fullSizePictureIntent)
     }
 
     companion object {
         private const val TAG = "로그"
-        private const val CAMERA_PERMISSION = android.Manifest.permission.CAMERA
         private const val STORAGE_WRITE_PERMISSION =
-            android.Manifest.permission.READ_EXTERNAL_STORAGE
-        private const val STORAGE_READ_PERMISSION =
             android.Manifest.permission.WRITE_EXTERNAL_STORAGE
+        private const val STORAGE_READ_PERMISSION =
+            android.Manifest.permission.READ_EXTERNAL_STORAGE
 
         private val PERMISSION_REQUESTED: Array<String> = arrayOf(
-            CAMERA_PERMISSION,
-            STORAGE_WRITE_PERMISSION,
             STORAGE_READ_PERMISSION
         )
     }
